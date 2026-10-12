@@ -138,24 +138,38 @@ INSERT INTO vacancies (title, description, salary_min, salary_max, status, emplo
 
 ## 4. Конфигурация подключения (`database.properties`)
 
-В соответствии с требованиями `2.txt`, параметры подключения к СУБД вынесены из Java-классов в отдельный ресурс `src/main/resources/database.properties`:
+Параметры подключения к СУБД вынесены из Java-классов в отдельный ресурс `src/main/resources/database.properties`:
 
 ```properties
-# Параметры подключения к базе данных КР №2
+# Параметры подключения к PostgreSQL для КР №2
 db.url=jdbc:postgresql://localhost:5432/hr_system_db
 db.user=hr_user
 db.password=hr_password
 db.driver=org.postgresql.Driver
-db.pool.max_total=10
 ```
 
+Единственный источник кредов — этот файл. Те же значения продублированы в `.env` (`POSTGRES_USER` / `POSTGRES_PASSWORD`) и используются в `docker-compose.yml` для инициализации контейнера, поэтому база и приложение всегда ходят под одним пользователем `hr_user`. В Java-коде пароля нет: `grep -rn "postgres" src/main/java` не находит ни захардкоженного пароля, ни фолбэка `postgres/postgres`.
+
+Соединение создаётся **на каждый DAO-вызов** — пул в КР №2 не используется.
+
 Загрузка выполняется через служебный класс `DatabaseManager`:
+
 ```java
 Properties props = new Properties();
 try (InputStream in = DatabaseManager.class.getClassLoader().getResourceAsStream("database.properties")) {
     props.load(in);
 }
 ```
+
+### 4.1. Fail-fast: конфиг обязателен, доступность БД — нет
+
+| Ситуация | Поведение |
+|---|---|
+| `database.properties` отсутствует в classpath | `IllegalStateException` в конструкторе `DatabaseManager` с текстом «database.properties не найден в classpath…» |
+| В файле пустое `db.url`, `db.user` или `db.password` | `IllegalStateException` вида «database.properties не найден или db.password не задан» |
+| Конфиг есть, но БД не поднята / неверный пароль | `testConnection()` возвращает `false`, `HrApplication` подключает `InMemoryVacancyDao` — приложение работает в автономном режиме |
+
+Разделение намеренное: отсутствие конфига — ошибка сборки, которую надо чинить, а не глушить. Недоступность БД — нормальная ситуация, для неё в приложении предусмотрен автономный режим со стабами. Поэтому `testConnection()` не бросает исключений, а `HrApplication` переключает статус в шапке окна на «🟢 PostgreSQL подключен» или «🟠 Автономный режим (Stub)».
 
 ---
 
